@@ -1,0 +1,222 @@
+#!/bin/bash
+
+# Enhanced Git Command - git cmt
+# Now supports parameterized input and a --no-interactive mode.
+# Behavior:
+# - By default, all inputs are taken interactively.
+# - If the user specifies parameters (e.g., --type feat), these are used as defaults.
+# - If user specifies --no-interactive, the script tries to use only parameters.
+#   If any are missing, it still falls back to prompting.
+
+CONFIG_FILE="$HOME/.git-cmt-config"
+
+# Defaults
+DEFAULT_BASE_BRANCH="develop"
+DEFAULT_BRANCH_TYPES=(feature bugfix hotfix release experiment)
+DEFAULT_COMMIT_TYPES=(feat fix hotfix chore docs refactor)
+DEFAULT_REMOTE="origin"
+
+# Load config if exists
+if [ -f "$CONFIG_FILE" ]; then
+  source "$CONFIG_FILE"
+fi
+
+# Colors for output
+RED="\e[31m"
+GREEN="\e[32m"
+YELLOW="\e[33m"
+BLUE="\e[34m"
+BOLD="\e[1m"
+RESET="\e[0m"
+
+# Output helpers
+function info() {
+  echo -e "${BLUE}${BOLD}INFO:${RESET} $1"
+}
+
+function success() {
+  echo -e "${GREEN}${BOLD}SUCCESS:${RESET} $1"
+}
+
+function warning() {
+  echo -e "${YELLOW}${BOLD}WARNING:${RESET} $1"
+}
+
+function error() {
+  echo -e "${RED}${BOLD}ERROR:${RESET} $1"
+  exit 1
+}
+
+# Show help message
+function show_help() {
+  echo "git cmt usage:"
+  echo "  git cmt branch [--type <type>] [--name <branch-name>] [--base <base-branch>] [--push] [--no-interactive] [--dry-run]"
+  echo "  git cmt commit [--type <type>] [--scope <scope>] [--subject <subject>] [--body <body>] [--footer <footer>] [--no-interactive]"
+  echo "  git cmt amend [--type <type>] [--scope <scope>] [--subject <subject>] [--body <body>] [--footer <footer>] [--no-interactive]"
+  echo "  git cmt help"
+  echo
+  echo "If --no-interactive is specified, the script tries to use provided parameters. If any are missing, you'll still be prompted."
+  echo "If not specified, the script is fully interactive but will use provided parameters as defaults."
+  echo
+  echo "Config file: $CONFIG_FILE (optional)"
+  echo "You can define in config:"
+  echo "  DEFAULT_BASE_BRANCH=\"develop\""
+  echo "  DEFAULT_BRANCH_TYPES=(feature bugfix ...)"
+  echo "  DEFAULT_COMMIT_TYPES=(feat fix ...)"
+  echo "  DEFAULT_REMOTE=\"origin\""
+}
+
+INTERACTIVE=true
+
+SUBCOMMAND=$1
+shift
+
+# ----------------------------
+# ARGUMENT PARSING UTILITIES
+# ----------------------------
+
+# Parse arguments for values
+function get_arg_val() {
+  local FLAG="$1"
+  local NEXT="$2"
+  if [[ -n "$NEXT" && "$NEXT" != --* ]]; then
+    echo "$NEXT"
+  else
+    warning "Missing value for $FLAG"
+    # Will prompt later if needed
+  fi
+}
+
+# Helper to ensure value is present, prompt if missing
+function ensure_value() {
+  local VAR_NAME="$1"
+  local PROMPT_MSG="$2"
+  local CURRENT_VAL="${!VAR_NAME}"
+
+  if [ -n "$CURRENT_VAL" ]; then
+    echo "$CURRENT_VAL"
+  else
+    # Prompt if missing
+    read -p "$PROMPT_MSG" INPUT
+    echo "$INPUT"
+  fi
+}
+
+# Helper for select menus
+function ensure_select() {
+  local VAR_NAME="$1"
+  local PROMPT_MSG="$2"
+  shift 2
+  local OPTIONS=("$@")
+  local CURRENT_VAL="${!VAR_NAME}"
+
+  if [ -n "$CURRENT_VAL" ]; then
+    for opt in "${OPTIONS[@]}"; do
+      if [[ "$opt" == "$CURRENT_VAL" ]]; then
+        echo "$CURRENT_VAL"
+        return
+      fi
+    done
+    warning "Invalid value '$CURRENT_VAL'. Falling back to prompt."
+  fi
+
+  echo "$PROMPT_MSG"
+  select CHOICE in "${OPTIONS[@]}"; do
+    if [ -n "$CHOICE" ]; then
+      echo "$CHOICE"
+      return
+    else
+      warning "Invalid selection. Try again."
+    fi
+  done
+}
+
+# ----------------------------
+# BRANCH CREATION
+# ----------------------------
+function cmd_branch() {
+  local DRY_RUN=false
+  local PUSH_BRANCH=false
+  local BRANCH_TYPE=""
+  local BRANCH_NAME=""
+  local BASE_BRANCH="$DEFAULT_BASE_BRANCH"
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --no-interactive)
+        INTERACTIVE=false
+        shift
+        ;;
+      --type)
+        BRANCH_TYPE=$(get_arg_val "--type" "$2")
+        shift 2
+        ;;
+      --name)
+        BRANCH_NAME=$(get_arg_val "--name" "$2")
+        shift 2
+        ;;
+      --base)
+        BASE_BRANCH=$(get_arg_val "--base" "$2")
+        shift 2
+        ;;
+      --push)
+        PUSH_BRANCH=true
+        shift
+        ;;
+      --dry-run)
+        DRY_RUN=true
+        shift
+        ;;
+      *)
+        warning "Unknown argument: $1"
+        shift
+        ;;
+    esac
+  done
+
+  BRANCH_TYPE=$(ensure_select BRANCH_TYPE "Select a branch type:" "${DEFAULT_BRANCH_TYPES[@]}")
+  BRANCH_NAME=$(ensure_value BRANCH_NAME "Enter a short name for the branch (use hyphens for spaces): ")
+
+  info "Base branch: $BASE_BRANCH"
+  info "New branch: $BRANCH_TYPE/$BRANCH_NAME"
+
+  if $DRY_RUN; then
+    warning "Dry-run mode. No changes will be made."
+    return
+  fi
+
+  git checkout "$BASE_BRANCH" || error "Failed to switch to '$BASE_BRANCH'."
+  git pull "$DEFAULT_REMOTE" "$BASE_BRANCH" || error "Failed to pull latest changes."
+  git checkout -b "$BRANCH_TYPE/$BRANCH_NAME" || error "Failed to create branch $BRANCH_TYPE/$BRANCH_NAME."
+
+  success "Branch $BRANCH_TYPE/$BRANCH_NAME created successfully."
+
+  if $PUSH_BRANCH; then
+    git push -u "$DEFAULT_REMOTE" "$BRANCH_TYPE/$BRANCH_NAME" || warning "Failed to push branch to remote."
+    success "Branch pushed to remote."
+  else
+    read -p "Push branch to remote? (y/N): " PUSH_ANSWER
+    if [[ "$PUSH_ANSWER" =~ ^[Yy]$ ]]; then
+      git push -u "$DEFAULT_REMOTE" "$BRANCH_TYPE/$BRANCH_NAME" || warning "Failed to push branch to remote."
+      success "Branch pushed to remote."
+    fi
+  fi
+}
+
+# ----------------------------
+# MAIN ENTRY POINT
+# ----------------------------
+case $SUBCOMMAND in
+  branch)
+    cmd_branch "$@"
+    ;;
+  help)
+    show_help
+    ;;
+  *)
+    warning "Unknown command: $SUBCOMMAND"
+    show_help
+    exit 1
+    ;;
+esac
