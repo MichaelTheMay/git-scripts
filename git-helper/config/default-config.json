@@ -1,0 +1,41 @@
+{
+        "core": {
+            "base_branch": "main",
+            "develop_branch": "develop",
+            "default_remote": "origin",
+            "issue_prefix": "PROJ",
+            "required_branches": ["main", "develop"],
+            "required_remotes": ["origin"],
+            "branch_protection": "True"
+        },
+        "branch_types": [
+            "feature",
+            "bugfix",
+            "hotfix",
+            "release",
+            "experiment"
+        ],
+        "commit_types": [
+            "feat",
+            "fix",
+            "docs",
+            "style",
+            "refactor",
+            "perf",
+            "test",
+            "chore"
+        ],
+        "protected_patterns": [
+            "main",
+            "master",
+            "develop",
+            "release/*"
+        ],
+        "checks": {
+            "enforce_branch_naming": "True",
+            "enforce_commit_messages": "True",
+            "require_linear_history": "True",
+            "require_signed_commits": "False",
+            "prevent_force_push": "True"
+        }
+    }
